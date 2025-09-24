@@ -1,5 +1,5 @@
 # Vị trí: .github/workflows/evaluate-coderabbit-review.yml
-# Phiên bản cuối cùng - Tăng cường độ tin cậy cho bộ lọc issue
+# Phiên bản đã được sửa lỗi cú pháp ký tự trắng (whitespace)
 
 name: Evaluate CodeRabbit Review
 
@@ -52,7 +52,6 @@ jobs:
               }
             }'
           
-          # SỬA LỖI: Cập nhật bộ lọc jq để chấp nhận cả 'coderabbitai' và 'coderabbitai[bot]'
           issues_json=$(gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER" \
             --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
               | select(.isResolved == false)
