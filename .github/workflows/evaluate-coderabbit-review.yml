@@ -123,8 +123,6 @@ jobs:
                   /repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews/$EXISTING_REVIEW_ID/dismissals \
                   -f message="Các vấn đề trước đó đã được giải quyết."
               fi
-
-              gh pr review $PR_NUMBER --approve --body "Action: Phê duyệt. Số lượng issue trong ngưỡng cho phép."
             else
               echo "PR was already approved by this action (Review ID: $EXISTING_APPROVAL_ID). Skipping."
             fi
