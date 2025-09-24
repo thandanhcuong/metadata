@@ -7,19 +7,12 @@ concurrency:
   cancel-in-progress: true
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
   pull_request_review:
     types: [submitted]
-  pull_request_review_comment:
-    types: [created]
 
 jobs:
   evaluate_codereview:
-    if: |
-      (github.event_name == 'pull_request_review' && github.event.sender.login == 'coderabbitai[bot]') ||
-      (github.event_name == 'pull_request' && github.event.action != 'closed') ||
-      (github.event_name == 'pull_request_review_comment' && github.event.sender.login != 'github-actions[bot]')
+    if: github.event.sender.login == 'coderabbitai[bot]'
     env:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -106,13 +99,12 @@ jobs:
             gh pr edit $PR_NUMBER --remove-label "READY TO MERGE" || true
           else
             echo "Issue count is ${{ steps.generate_summary.outputs.issue_count }} (<=3). Checking for existing approval."
-
+            
             EXISTING_APPROVAL_ID=$(gh pr view $PR_NUMBER --json reviews --jq '.reviews[] | select(.author.login == "github-actions[bot]" and .state == "APPROVED") | .id' | tail -n 1)
 
             if [ -z "$EXISTING_APPROVAL_ID" ]; then
               echo "No existing approval found. Submitting a new approval."
 
-              # --- SỬA LỖI BẮT ĐẦU TỪ ĐÂY ---
               EXISTING_REVIEW_ID=$(gh pr view $PR_NUMBER --json reviews --jq '.reviews[] | select(.author.login == "github-actions[bot]" and .state == "CHANGES_REQUESTED") | .id' | tail -n 1)
               if [ -n "$EXISTING_REVIEW_ID" ]; then
                 echo "Dismissing previous 'Changes Requested' review (ID: $EXISTING_REVIEW_ID)."
@@ -124,7 +116,7 @@ jobs:
             else
               echo "PR was already approved by this action (Review ID: $EXISTING_APPROVAL_ID). Skipping."
             fi
-
+            
             gh pr edit $PR_NUMBER --add-label "READY TO MERGE"
           fi
 
