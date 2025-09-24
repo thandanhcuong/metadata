@@ -1,5 +1,5 @@
 # Vị trí: .github/workflows/evaluate-coderabbit-review.yml
-# Phiên bản đã sửa lỗi trigger bị 'Skipped'
+# Phiên bản cuối cùng - Tăng cường độ tin cậy cho bộ lọc issue
 
 name: Evaluate CodeRabbit Review
 
@@ -13,7 +13,6 @@ on:
 
 jobs:
   evaluate_codereview:
-    # SỬA LỖI: Sửa lại tên bot trong điều kiện if cho đúng với 'sender' của sự kiện
     if: github.event.sender.login == 'coderabbitai[bot]'
     env:
       PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -53,9 +52,13 @@ jobs:
               }
             }'
           
-          # Trong truy vấn GraphQL, tên tác giả vẫn là 'coderabbitai'
+          # SỬA LỖI: Cập nhật bộ lọc jq để chấp nhận cả 'coderabbitai' và 'coderabbitai[bot]'
           issues_json=$(gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER" \
-            --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[] | select(.author.login == "coderabbitai" and (.body | contains("_⚠️ Potential issue_")))]')
+            --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+              | select(.isResolved == false)
+              | .comments.nodes[]
+              | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+                       and (.body | contains("_⚠️ Potential issue_")))]')
             
           issue_count=$(echo "$issues_json" | jq 'length')
           echo "Final issue count is: $issue_count"
@@ -85,7 +88,6 @@ jobs:
           echo -e "$SUMMARY_BODY" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # --- Các bước còn lại không đổi ---
       - name: Find existing summary comment
         id: find_comment
         uses: peter-evans/find-comment@v3
@@ -123,6 +125,8 @@ jobs:
                   /repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews/$EXISTING_REVIEW_ID/dismissals \
                   -f message="Các vấn đề trước đó đã được giải quyết."
               fi
+
+              gh pr review $PR_NUMBER --approve --body "Action: Phê duyệt. Số lượng issue trong ngưỡng cho phép."
             else
               echo "PR was already approved by this action (Review ID: $EXISTING_APPROVAL_ID). Skipping."
             fi
