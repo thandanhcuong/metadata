@@ -1,5 +1,5 @@
 # Vị trí: .github/workflows/evaluate-coderabbit-review.yml
-# Phiên bản cuối cùng đã sửa lỗi đếm issue
+# Phiên bản đã được sửa lỗi cú pháp ký tự trắng (whitespace)
 
 name: Evaluate CodeRabbit Review
 
@@ -13,12 +13,11 @@ on:
 
 jobs:
   evaluate_codereview:
-    if: github.event.sender.login == 'coderabbitai' # SỬA LỖI: Cập nhật tên bot cho đúng
+    if: github.event.sender.login == 'coderabbitai[bot]'
     env:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # SỬA LỖI: Thêm lại marker duy nhất để tìm kiếm comment
       COMMENT_MARKER: ""
     runs-on: ubuntu-latest
     permissions:
@@ -30,7 +29,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Khôi phục lại bước Generate Summary với logic đúng
       - name: Generate Summary from Unresolved Comments
         id: generate_summary
         run: |
@@ -54,9 +52,12 @@ jobs:
               }
             }'
           
-          # SỬA LỖI: Thay "coderabbitai[bot]" bằng "coderabbitai"
           issues_json=$(gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER" \
-            --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[] | select(.author.login == "coderabbitai" and (.body | contains("_⚠️ Potential issue_")))]')
+            --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+              | select(.isResolved == false)
+              | .comments.nodes[]
+              | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+                       and (.body | contains("_⚠️ Potential issue_")))]')
             
           issue_count=$(echo "$issues_json" | jq 'length')
           echo "Final issue count is: $issue_count"
