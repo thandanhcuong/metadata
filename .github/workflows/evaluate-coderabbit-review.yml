@@ -1,5 +1,5 @@
 # Vị trí: .github/workflows/evaluate-coderabbit-review.yml
-# Phiên bản cuối cùng đã sửa lỗi đếm issue
+# Phiên bản đã sửa lỗi trigger bị 'Skipped'
 
 name: Evaluate CodeRabbit Review
 
@@ -13,12 +13,12 @@ on:
 
 jobs:
   evaluate_codereview:
-    if: github.event.sender.login == 'coderabbitai' # SỬA LỖI: Cập nhật tên bot cho đúng
+    # SỬA LỖI: Sửa lại tên bot trong điều kiện if cho đúng với 'sender' của sự kiện
+    if: github.event.sender.login == 'coderabbitai[bot]'
     env:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # SỬA LỖI: Thêm lại marker duy nhất để tìm kiếm comment
       COMMENT_MARKER: ""
     runs-on: ubuntu-latest
     permissions:
@@ -30,7 +30,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Khôi phục lại bước Generate Summary với logic đúng
       - name: Generate Summary from Unresolved Comments
         id: generate_summary
         run: |
@@ -54,7 +53,7 @@ jobs:
               }
             }'
           
-          # SỬA LỖI: Thay "coderabbitai[bot]" bằng "coderabbitai"
+          # Trong truy vấn GraphQL, tên tác giả vẫn là 'coderabbitai'
           issues_json=$(gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER" \
             --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[] | select(.author.login == "coderabbitai" and (.body | contains("_⚠️ Potential issue_")))]')
             
@@ -86,6 +85,7 @@ jobs:
           echo -e "$SUMMARY_BODY" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      # --- Các bước còn lại không đổi ---
       - name: Find existing summary comment
         id: find_comment
         uses: peter-evans/find-comment@v3
