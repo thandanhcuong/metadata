@@ -1,149 +1,148 @@
-# Location: .github/workflows/evaluate-coderabbit-review.yml
+# Workflow name, displayed in the GitHub "Actions" tab
+name: Evaluate CodeRabbit Review
 
-name: 'Evaluate CodeRabbit Review'
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
+# Trigger configuration: Run this workflow when a PR review is submitted
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
   pull_request_review:
     types: [submitted]
-  pull_request_review_comment:
-    types: [created, deleted]
 
+# Define the jobs to be run
 jobs:
   evaluate_codereview:
-    if: |
-      (github.event_name == 'pull_request_review' && github.event.sender.login == 'coderabbitai[bot]') ||
-      (github.event_name == 'pull_request' && github.event.action != 'closed') ||
-      (github.event_name == 'pull_request_review_comment' && github.event.sender.login != 'github-actions[bot]')
-    env:
-      PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      COMMENT_MARKER: ""
+    # Condition to run the job:
+    # 1. Only run if the review is created by 'coderabbitai' or 'coderabbitai[bot]'
+    # 2. And the review must have a non-empty body
+    if: >
+      (github.event.review.user.login == 'coderabbitai' ||
+       github.event.review.user.login == 'coderabbitai[bot]') &&
+       (github.event.review.body != '')
+       
+    # Run on the latest Ubuntu environment
     runs-on: ubuntu-latest
+
+    # Grant necessary permissions for the workflow
     permissions:
-      pull-requests: write
       contents: read
-      statuses: write
+      pull-requests: read
 
+    # Configure concurrency to prevent overlapping runs on the same PR
+    concurrency:
+      group: codereview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+
+    # The steps to be executed by the job
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      # Step 1: Ensure GitHub CLI is authenticated
+      - name: Ensure gh is authenticated
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh auth status || gh auth login --with-token <<<"$GH_TOKEN"
 
-      - name: Evaluate Unresolved Comments and Generate Summary
-        id: evaluate
+      # Step 2: Fetch the latest CodeRabbit review and count keywords
+      - name: Fetch latest CodeRabbit review and count keywords
+        id: count_comments
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
         run: |
-          graphql_query='
-            query($owner: String!, $name: String!, $prNumber: Int!) {
-              repository(owner: $owner, name: $name) {
-                pullRequest(number: $prNumber) {
-                  reviewThreads(first: 100) {
-                    nodes {
-                      isResolved
-                      comments(first: 20) {
-                        nodes {
-                          author { login }
-                          body
-                          url
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }'
+          set -euo pipefail
 
-          unresolved_comments_json=$(gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER" \
-            --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[] | select(.author.login == "coderabbitai[bot]")]')
+          # Get all reviews for the PR
+          reviews_json="$(gh api repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews --paginate)"
 
-          potential_issue_count=$(echo "$unresolved_comments_json" | jq '[.[] | select(.body | contains("_⚠️ Potential issue_"))] | length')
-          refactor_suggestion_count=$(echo "$unresolved_comments_json" | jq '[.[] | select(.body | contains("_Refactor suggestion_"))] | length')
-          total_unresolved_count=$(echo "$unresolved_comments_json" | jq 'length')
-          total_suggestions=$((potential_issue_count + refactor_suggestion_count))
+          # Use jq to filter for the latest CodeRabbit review with a body
+          latest_review="$(jq -r '
+            [ .[]
+              | select(.user.login=="coderabbitai" or .user.login=="coderabbitai[bot]")
+              | select(.body != null and .body != "")
+            ]
+            | sort_by(.submitted_at)
+            | last
+          ' <<<"$reviews_json")"
 
-          echo "potential_issue_count=$potential_issue_count" >> $GITHUB_OUTPUT
-          echo "total_suggestions=$total_suggestions" >> $GITHUB_OUTPUT
-          echo "total_unresolved_count=$total_unresolved_count" >> $GITHUB_OUTPUT
-
-          SUMMARY_BODY="${{ env.COMMENT_MARKER }}\n\n### 🔍 CodeRabbit Analysis\n\n"
-
-          if [ "$total_unresolved_count" -gt 0 ]; then
-            SUMMARY_BODY="${SUMMARY_BODY}**<font color='red'>Found $total_unresolved_count unresolved comment(s).</font>**\n\n"
-            SUMMARY_BODY="${SUMMARY_BODY}| Type | Details | Link |\n"
-            SUMMARY_BODY="${SUMMARY_BODY}|:---|:---|:---|\n"
-            table_rows=$(echo "$unresolved_comments_json" | jq -r '.[] | "| `\(if (.body | contains("_⚠️ Potential issue_")) then "Issue" else "Refactor" end)` | `\(.body | split("\n")[0])` | [View](\(.url)) |"')
-            SUMMARY_BODY="${SUMMARY_BODY}${table_rows}"
+          # If no review is found, exit early
+          if [[ "$latest_review" == "null" || -z "$latest_review" ]]; then
+            echo "No CodeRabbit reviews with body found on this PR."
+            {
+              echo "potential_count=0"
+              echo "refactor_count=0"
+              echo "review_id="
+            } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-          SUMMARY_BODY="${SUMMARY_BODY}\n\n---\n"
+          review_id="$(jq -r '.id' <<<"$latest_review")"
+          echo "Latest CodeRabbit review id: $review_id"
 
-          if [ "$total_unresolved_count" -gt 0 ] || [ "$potential_issue_count" -gt 1 ] || [ "$total_suggestions" -gt 4 ]; then
-            SUMMARY_BODY="${SUMMARY_BODY}**<font color='red'>❌ Status: Changes Requested.</font>**\n"
-            SUMMARY_BODY="${SUMMARY_BODY}- Total unresolved comments: **$total_unresolved_count** (Required: 0)\n"
-            SUMMARY_BODY="${SUMMARY_BODY}- Unresolved 'Potential Issues': **$potential_issue_count** (Required: ≤ 1)\n"
-            SUMMARY_BODY="${SUMMARY_BODY}- Total 'Issues' + 'Refactors': **$total_suggestions** (Required: ≤ 4)"
-          fi
+          # Get the comments within that specific review
+          comments_json="$(gh api repos/$OWNER/$REPO/pulls/$PR_NUMBER/reviews/$review_id/comments --paginate)"
+          
+          # Count the number of comments containing the keywords
+          potential_count="$(jq '[ .[] | select(.body | strings | contains("⚠️ Potential issue")) ] | length' <<<"$comments_json")"
+          refactor_count="$(jq  '[ .[] | select(.body | strings | contains("🛠️ Refactor suggestion")) ] | length' <<<"$comments_json")"
 
-          echo "summary_body<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$SUMMARY_BODY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "Potential issue count: $potential_count"
+          echo "Refactor suggestion count: $refactor_count"
 
-      - name: Create or Update Summary Comment
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          issue-number: ${{ env.PR_NUMBER }}
-          body: ${{ steps.evaluate.outputs.summary_body }}
-          edit-mode: replace
+          # Write the results to the output for subsequent steps to use
+          {
+            echo "potential_count=$potential_count"
+            echo "refactor_count=$refactor_count"
+            echo "review_id=$review_id"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Approve or Request Changes based on Evaluation
+      # Step 3: Decide Pass/Fail based on the counts
+      - name: Decide pass/fail
+        env:
+          POTENTIAL: ${{ steps.count_comments.outputs.potential_count }}
+          REFACTOR: ${{ steps.count_comments.outputs.refactor_count }}
         run: |
-          total_unresolved=${{ steps.evaluate.outputs.total_unresolved_count }}
-          potential_issues=${{ steps.evaluate.outputs.potential_issue_count }}
-          total_suggestions=${{ steps.evaluate.outputs.total_suggestions }}
-
-          if [ "$total_unresolved" -gt 0 ] || [ "$potential_issues" -gt 1 ] || [ "$total_suggestions" -gt 4 ]; then
-            echo "Requesting changes because quality gates were not met."
-            gh pr review $PR_NUMBER --request-changes --body "Action: Changes requested. See summary comment for details."
-            gh pr edit $PR_NUMBER --remove-label "READY TO MERGE" || true
+          TOTAL=$(( ${POTENTIAL:-0} + ${REFACTOR:-0} ))
+          echo "Decision based on counts -> potential: $POTENTIAL, refactor: $REFACTOR, total: $TOTAL"
+          
+          # Failure condition (the inverse of your merge requirements):
+          # Fails IF (total > 4) OR (potential > 1)
+          if [[ $TOTAL -gt 4 || ${POTENTIAL:-0} -gt 1 ]]; then
+            echo "❌ Failing: Total issues ($TOTAL) > 4 or Potential issues ($POTENTIAL) > 1."
+            exit 1
           else
-            echo "All quality gates passed. Proceeding with approval."
-
-            EXISTING_REVIEW_ID=$(gh pr view $PR_NUMBER --json reviews --jq '.reviews[] | select(.author.login == "github-actions[bot]" and .state == "CHANGES_REQUESTED") | .id' | tail -n 1)
-            if [ -n "$EXISTING_REVIEW_ID" ]; then
-              echo "Dismissing previous 'Changes Requested' review (ID: $EXISTING_REVIEW_ID)."
-              gh api \
-                --method PUT \
-                /repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews/$EXISTING_REVIEW_ID/dismissals \
-                -f message="Previous issues have been addressed."
-            fi
-
-            echo "Submitting the final approval."
-            gh pr edit $PR_NUMBER --add-label "READY TO MERGE"
+            echo "✅ Passing: Counts are within the allowed thresholds."
           fi
 
-      - name: Report Final Status Check
+      # Step 4: Post a job summary (always runs, regardless of previous step's success or failure)
+      - name: Post job summary
         if: always()
+        env:
+          POTENTIAL: ${{ steps.count_comments.outputs.potential_count }}
+          REFACTOR: ${{ steps.count_comments.outputs.refactor_count }}
+          REVIEW_ID: ${{ steps.count_comments.outputs.review_id }}
+          REPO_FULL: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          total_unresolved=${{ steps.evaluate.outputs.total_unresolved_count }}
-          potential_issues=${{ steps.evaluate.outputs.potential_issue_count }}
-          total_suggestions=${{ steps.evaluate.outputs.total_suggestions }}
-
-          if [ "$total_unresolved" -gt 0 ] || [ "$potential_issues" -gt 1 ] || [ "$total_suggestions" -gt 4 ]; then
-            STATE='failure'
-            DESC="Failed: $total_unresolved unresolved comment(s) exist or thresholds exceeded."
-          else
-            STATE='success'
-            DESC='Success: All code review quality gates passed.'
-          fi
-
-          gh api \
-            --method POST \
-            /repos/${{ github.repository }}/statuses/$HEAD_SHA \
-            -f state="$STATE" \
-            -f description="$DESC" \
-            -f context='Code Review Quality Gate'
+          TOTAL=$(( ${POTENTIAL:-0} + ${REFACTOR:-0} ))
+          {
+            echo "### CodeRabbit Latest Review Check"
+            echo ""
+            echo "| Metric | Count |"
+            echo "|---|---|"
+            echo "| '⚠️ Potential issue' | **${POTENTIAL:-0}** |"
+            echo "| '🛠️ Refactor suggestion' | **${REFACTOR:-0}** |"
+            echo "| **Total Issues** | **$TOTAL** |"
+            echo ""
+            echo "**Merge Conditions:**"
+            echo "- Total Issues ≤ 4"
+            echo "- Potential Issues ≤ 1"
+            echo ""
+            # Failure condition in the summary report
+            if [[ $TOTAL -gt 4 || ${POTENTIAL:-0} -gt 1 ]]; then
+              echo "**Result:** ❌ **Fail** (Thresholds exceeded)"
+            else
+              echo "**Result:** ✅ **Success** (Within thresholds)"
+            fi
+            echo ""
+            echo "PR: ${REPO_FULL}#${PR_NUMBER}"
+            echo "Latest review ID: ${REVIEW_ID:-N/A}"
+          } >> "$GITHUB_STEP_SUMMARY"
