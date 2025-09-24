@@ -1,4 +1,5 @@
 # Vị trí: .github/workflows/evaluate-coderabbit-review.yml
+# Phiên bản cuối cùng đã sửa lỗi đếm issue
 
 name: Evaluate CodeRabbit Review
 
@@ -12,13 +13,13 @@ on:
 
 jobs:
   evaluate_codereview:
-    if: github.event.sender.login == 'coderabbitai[bot]'
+    if: github.event.sender.login == 'coderabbitai' # SỬA LỖI: Cập nhật tên bot cho đúng
     env:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      COMMENT_MARKER: "" # Đã sửa lại marker để không bị rỗng
-    # SỬA LỖI: Căn chỉnh lại thụt đầu dòng cho các mục dưới đây
+      # SỬA LỖI: Thêm lại marker duy nhất để tìm kiếm comment
+      COMMENT_MARKER: ""
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -29,8 +30,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # THAY THẾ TOÀN BỘ BƯỚC NÀY ĐỂ DEBUG
-      - name: Generate Summary from Unresolved Comments (DEBUG MODE)
+      # Khôi phục lại bước Generate Summary với logic đúng
+      - name: Generate Summary from Unresolved Comments
         id: generate_summary
         run: |
           graphql_query='
@@ -52,16 +53,38 @@ jobs:
                 }
               }
             }'
-
-          echo "--- DEBUG: Fetching raw data from GraphQL API ---"
-          # In ra toàn bộ dữ liệu JSON thô mà không lọc
-          gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER"
-          echo "--- DEBUG: End of raw data ---"
-
-          # Tạm thời đặt issue_count = 1 để workflow không bị lỗi ở các bước sau
-          echo "Forcing issue_count to 1 to allow workflow to complete."
-          echo "issue_count=1" >> $GITHUB_OUTPUT
-          echo "summary_body=Đây là comment debug." >> $GITHUB_OUTPUT
+          
+          # SỬA LỖI: Thay "coderabbitai[bot]" bằng "coderabbitai"
+          issues_json=$(gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER" \
+            --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[] | select(.author.login == "coderabbitai" and (.body | contains("_⚠️ Potential issue_")))]')
+            
+          issue_count=$(echo "$issues_json" | jq 'length')
+          echo "Final issue count is: $issue_count"
+          echo "issue_count=$issue_count" >> $GITHUB_OUTPUT
+          
+          SUMMARY_BODY="${{ env.COMMENT_MARKER }}\n\n### 🔍 Phân tích từ CodeRabbit\n\n"
+          
+          if [ "$issue_count" -gt 0 ]; then
+            SUMMARY_BODY="${SUMMARY_BODY}**<font color='red'> tìm thấy $issue_count 'Potential issue' chưa được giải quyết.</font>**\n\n"
+            SUMMARY_BODY="${SUMMARY_BODY}| Vấn đề được phát hiện | Xem chi tiết |\n"
+            SUMMARY_BODY="${SUMMARY_BODY}| --- | --- |\n"
+            table_rows=$(echo "$issues_json" | jq -r '.[] | "| `\(.body | split("\n")[0])` | [Link tới comment](\(.url)) |"')
+            SUMMARY_BODY="${SUMMARY_BODY}${table_rows}"
+          else
+            SUMMARY_BODY="${SUMMARY_BODY}**<font color='green'> Tuyệt vời!</font>** Tất cả 'Potential issue' đã được giải quyết.\n"
+          fi
+          
+          SUMMARY_BODY="${SUMMARY_BODY}\n\n---\n"
+          if [ "$issue_count" -gt 3 ]; then
+             SUMMARY_BODY="${SUMMARY_BODY}**<font color='orange'>⚠️ Trạng thái: Yêu cầu thay đổi.</font>** Số lượng 'Potential issue' (${issue_count}) vượt quá ngưỡng cho phép (3)."
+          else
+             SUMMARY_BODY="${SUMMARY_BODY}**<font color='green'>✅ Trạng thái: Phê duyệt.</font>** Số lượng 'Potential issue' (${issue_count}) nằm trong ngưỡng cho phép."
+          fi
+          
+          SUMMARY_BODY="${SUMMARY_BODY}\n\n*Bảng này được cập nhật tự động bởi GitHub Actions.*"
+          echo "summary_body<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$SUMMARY_BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Find existing summary comment
         id: find_comment
@@ -80,7 +103,6 @@ jobs:
 
       - name: Approve or Request Changes based on Issue Count
         run: |
-          # Logic này tạm thời không quan trọng vì issue_count được đặt cứng là 1
           if [ "${{ steps.generate_summary.outputs.issue_count }}" -gt 3 ]; then
             echo "Requesting changes because issue count is ${{ steps.generate_summary.outputs.issue_count }} (>3)."
             gh pr review $PR_NUMBER --request-changes --body "Action: Yêu cầu thay đổi. Chi tiết xem trong comment tóm tắt."
@@ -101,9 +123,8 @@ jobs:
                   /repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews/$EXISTING_REVIEW_ID/dismissals \
                   -f message="Các vấn đề trước đó đã được giải quyết."
               fi
-              
-              # Tạm thời comment dòng này lại trong lúc debug để tránh spam
-              # gh pr review $PR_NUMBER --approve --body "Action: Phê duyệt. Số lượng issue trong ngưỡng cho phép."
+
+              gh pr review $PR_NUMBER --approve --body "Action: Phê duyệt. Số lượng issue trong ngưỡng cho phép."
             else
               echo "PR was already approved by this action (Review ID: $EXISTING_APPROVAL_ID). Skipping."
             fi
