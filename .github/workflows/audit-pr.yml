@@ -44,6 +44,7 @@ jobs:
                 }
               }
             }'
+
           unresolved_count=$(gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER" \
             --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[] | select(.author.login == "coderabbitai")] | length')
           
@@ -66,6 +67,8 @@ jobs:
           issue-number: ${{ github.event.pull_request.number || github.event.issue.number }}
           body: ${{ steps.run_audit.outputs.summary_body }}
           edit-mode: replace
+          # SỬA LỖI: Thêm 'body-includes' để action tìm và cập nhật comment cũ
+          body-includes: ${{ env.COMMENT_MARKER }}
       
       - name: Set Workflow Status
         if: always()
