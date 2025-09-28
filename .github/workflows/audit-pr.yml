@@ -67,7 +67,6 @@ jobs:
           issue-number: ${{ github.event.pull_request.number || github.event.issue.number }}
           body: ${{ steps.run_audit.outputs.summary_body }}
           edit-mode: replace
-          # SỬA LỖI: Thêm 'body-includes' để action tìm và cập nhật comment cũ
           body-includes: ${{ env.COMMENT_MARKER }}
       
       - name: Set Workflow Status
