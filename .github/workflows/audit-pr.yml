@@ -20,38 +20,9 @@ jobs:
       pull-requests: write
 
     steps:
-      # BƯỚC DEBUG TẠM THỜI
-      - name: Debug - Print Raw Review Thread Data
-        env:
-          # SỬA LỖI: pull-request -> pull_request
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "Fetching raw data for PR #${PR_NUMBER} to find the correct bot login name..."
-          gh api graphql -f query='
-            query($owner: String!, $name: String!, $prNumber: Int!) {
-              repository(owner: $owner, name: $name) {
-                pullRequest(number: $prNumber) {
-                  reviewThreads(first: 100) {
-                    nodes {
-                      isResolved
-                      comments(first: 20) {
-                        nodes {
-                          author { login }
-                          body
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }' -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER"
-
-      # BƯỚC CHÍNH ĐỂ KIỂM TRA
       - name: Run Audit and Generate Summary
         id: run_audit
         env:
-          # SỬA LỖI: pull-request -> pull_request
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COMMENT_MARKER: ""
@@ -74,6 +45,8 @@ jobs:
               }
             }'
 
+          # SỬA LỖI LOGIC TẠI ĐÂY
+          # Logic mới sẽ quét TẤT CẢ comment trong các luồng chưa được giải quyết
           unresolved_count=$(gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER" \
             --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[] | select(.author.login == "coderabbitai[bot]")] | length')
 
@@ -93,7 +66,6 @@ jobs:
       - name: Create or Update Audit Comment
         uses: peter-evans/create-or-update-comment@v4
         with:
-          # SỬA LỖI: pull-request -> pull_request
           issue-number: ${{ github.event.pull_request.number || github.event.issue.number }}
           body: ${{ steps.run_audit.outputs.summary_body }}
           edit-mode: replace
