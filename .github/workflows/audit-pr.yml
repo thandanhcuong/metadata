@@ -2,6 +2,10 @@
 
 name: 'Audit PR for Unresolved Comments'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     types: [closed]
@@ -27,6 +31,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COMMENT_MARKER: ""
         run: |
+          # (Phần logic tính toán này vẫn giữ nguyên)
           graphql_query='
             query($owner: String!, $name: String!, $prNumber: Int!) {
               repository(owner: $owner, name: $name) {
@@ -52,7 +57,7 @@ jobs:
 
           SUMMARY_BODY="${{ env.COMMENT_MARKER }}\n\n### 🛡️ Final Audit Report\n\n"
           if [ "$unresolved_count" -gt 0 ]; then
-            SUMMARY_BODY="${SUMMARY_BODY}**<font color='red'>❌ Audit Failed.</font>** Found **$unresolved_count** unresolved CodeRabbit comment(s) at the time of merge/audit."
+            SUMMARY_BODY="${SUMMARY_BODY}**<font color='red'>❌ Audit Failed.</font>** Found **$unresolved_count** unresolved CodeRabbit comment(s)."
           else
             SUMMARY_BODY="${SUMMARY_BODY}**<font color='green'>✅ Audit Passed.</font>** All CodeRabbit comments were resolved."
           fi
@@ -61,14 +66,23 @@ jobs:
           echo -e "$SUMMARY_BODY" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      # BƯỚC 1: TÌM COMMENT CŨ DỰA TRÊN MARKER
+      - name: Find Comment
+        uses: peter-evans/find-comment@v3
+        id: find_comment
+        with:
+          issue-number: ${{ github.event.pull_request.number || github.event.issue.number }}
+          body-includes: ${{ env.COMMENT_MARKER }}
+
+      # BƯỚC 2: CẬP NHẬT DỰA TRÊN ID TÌM THẤY HOẶC TẠO MỚI
       - name: Create or Update Audit Comment
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.pull_request.number || github.event.issue.number }}
+          # Dùng comment-id từ bước "Find Comment"
+          comment-id: ${{ steps.find_comment.outputs.comment-id }}
           body: ${{ steps.run_audit.outputs.summary_body }}
           edit-mode: replace
-          # SỬA LỖI: Thêm 'body-includes' để action tìm và cập nhật comment cũ
-          body-includes: ${{ env.COMMENT_MARKER }}
       
       - name: Set Workflow Status
         if: always()
