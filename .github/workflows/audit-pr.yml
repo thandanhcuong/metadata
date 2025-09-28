@@ -13,7 +13,7 @@ jobs:
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
       (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/auditor review'))
-
+    
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -44,12 +44,9 @@ jobs:
                 }
               }
             }'
-
-          # SỬA LỖI LOGIC TẠI ĐÂY
-          # Logic mới sẽ quét TẤT CẢ comment trong các luồng chưa được giải quyết
           unresolved_count=$(gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER" \
             --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[] | select(.author.login == "coderabbitai[bot]")] | length')
-
+          
           echo "unresolved_count=$unresolved_count" >> $GITHUB_OUTPUT
 
           SUMMARY_BODY="${{ env.COMMENT_MARKER }}\n\n### 🛡️ Final Audit Report\n\n"
@@ -58,7 +55,7 @@ jobs:
           else
             SUMMARY_BODY="${SUMMARY_BODY}**<font color='green'>✅ Audit Passed.</font>** All CodeRabbit comments were resolved."
           fi
-
+          
           echo "summary_body<<EOF" >> $GITHUB_OUTPUT
           echo -e "$SUMMARY_BODY" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -69,7 +66,7 @@ jobs:
           issue-number: ${{ github.event.pull_request.number || github.event.issue.number }}
           body: ${{ steps.run_audit.outputs.summary_body }}
           edit-mode: replace
-
+      
       - name: Set Workflow Status
         if: always()
         run: |
