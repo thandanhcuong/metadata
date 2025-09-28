@@ -17,12 +17,41 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write # Changed to write to allow commenting
+      pull-requests: write
 
     steps:
+      # BƯỚC DEBUG TẠM THỜI
+      - name: Debug - Print Raw Review Thread Data
+        env:
+          # SỬA LỖI: pull-request -> pull_request
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Fetching raw data for PR #${PR_NUMBER} to find the correct bot login name..."
+          gh api graphql -f query='
+            query($owner: String!, $name: String!, $prNumber: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $prNumber) {
+                  reviewThreads(first: 100) {
+                    nodes {
+                      isResolved
+                      comments(first: 20) {
+                        nodes {
+                          author { login }
+                          body
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER"
+
+      # BƯỚC CHÍNH ĐỂ KIỂM TRA
       - name: Run Audit and Generate Summary
         id: run_audit
         env:
+          # SỬA LỖI: pull-request -> pull_request
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COMMENT_MARKER: ""
@@ -34,7 +63,7 @@ jobs:
                   reviewThreads(first: 100) {
                     nodes {
                       isResolved
-                      comments(first: 1) {
+                      comments(first: 20) {
                         nodes {
                           author { login }
                         }
@@ -46,11 +75,10 @@ jobs:
             }'
 
           unresolved_count=$(gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER" \
-            --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .comments.nodes[0].author.login == "coderabbitai[bot]")] | length')
+            --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[] | select(.author.login == "coderabbitai[bot]")] | length')
 
           echo "unresolved_count=$unresolved_count" >> $GITHUB_OUTPUT
 
-          # --- Build Summary Comment Body ---
           SUMMARY_BODY="${{ env.COMMENT_MARKER }}\n\n### 🛡️ Final Audit Report\n\n"
           if [ "$unresolved_count" -gt 0 ]; then
             SUMMARY_BODY="${SUMMARY_BODY}**<font color='red'>❌ Audit Failed.</font>** Found **$unresolved_count** unresolved CodeRabbit comment(s) at the time of merge/audit."
@@ -65,6 +93,7 @@ jobs:
       - name: Create or Update Audit Comment
         uses: peter-evans/create-or-update-comment@v4
         with:
+          # SỬA LỖI: pull-request -> pull_request
           issue-number: ${{ github.event.pull_request.number || github.event.issue.number }}
           body: ${{ steps.run_audit.outputs.summary_body }}
           edit-mode: replace
