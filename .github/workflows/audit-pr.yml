@@ -20,34 +20,6 @@ jobs:
       pull-requests: write
 
     steps:
-      # BƯỚC 1: DEBUG ĐỂ TÌM TÊN LOGIN CHÍNH XÁC
-      - name: Debug - Print Raw Review Data
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo ">>> Fetching raw review data for PR #${PR_NUMBER}..."
-          gh api graphql -f query='
-            query($owner: String!, $name: String!, $prNumber: Int!) {
-              repository(owner: $owner, name: $name) {
-                pullRequest(number: $prNumber) {
-                  reviewThreads(first: 100) {
-                    nodes {
-                      isResolved
-                      comments(first: 20) {
-                        nodes {
-                          author { login }
-                          body
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }' -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER"
-          echo ">>> End of raw data."
-
-      # BƯỚC 2: CHẠY KIỂM TRA VỚI TÊN LOGIN ĐÚNG
       - name: Run Audit and Generate Summary
         id: run_audit
         env:
@@ -73,7 +45,7 @@ jobs:
               }
             }'
           unresolved_count=$(gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER" \
-            --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[] | select(.author.login == "coderabbitai[bot]")] | length')
+            --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[] | select(.author.login == "coderabbitai")] | length')
           
           echo "unresolved_count=$unresolved_count" >> $GITHUB_OUTPUT
 
