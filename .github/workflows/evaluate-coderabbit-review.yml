@@ -58,45 +58,35 @@ jobs:
               }
             }'
 
-          # Get all unresolved comments from coderabbitai[bot]
           unresolved_comments_json=$(gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER" \
             --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[] | select(.author.login == "coderabbitai[bot]")]')
 
-          # Count specific types of unresolved comments
           potential_issue_count=$(echo "$unresolved_comments_json" | jq '[.[] | select(.body | contains("_⚠️ Potential issue_"))] | length')
           refactor_suggestion_count=$(echo "$unresolved_comments_json" | jq '[.[] | select(.body | contains("_Refactor suggestion_"))] | length')
           total_unresolved_count=$(echo "$unresolved_comments_json" | jq 'length')
           total_suggestions=$((potential_issue_count + refactor_suggestion_count))
 
-          echo "Unresolved Potential Issues: $potential_issue_count"
-          echo "Unresolved Refactor Suggestions: $refactor_suggestion_count"
-          echo "Total Unresolved CodeRabbit Comments: $total_unresolved_count"
-
           echo "potential_issue_count=$potential_issue_count" >> $GITHUB_OUTPUT
           echo "total_suggestions=$total_suggestions" >> $GITHUB_OUTPUT
           echo "total_unresolved_count=$total_unresolved_count" >> $GITHUB_OUTPUT
 
-          # --- Build Summary Comment Body ---
           SUMMARY_BODY="${{ env.COMMENT_MARKER }}\n\n### 🔍 CodeRabbit Analysis\n\n"
+
           if [ "$total_unresolved_count" -gt 0 ]; then
             SUMMARY_BODY="${SUMMARY_BODY}**<font color='red'>Found $total_unresolved_count unresolved comment(s).</font>**\n\n"
             SUMMARY_BODY="${SUMMARY_BODY}| Type | Details | Link |\n"
             SUMMARY_BODY="${SUMMARY_BODY}|:---|:---|:---|\n"
             table_rows=$(echo "$unresolved_comments_json" | jq -r '.[] | "| `\(if (.body | contains("_⚠️ Potential issue_")) then "Issue" else "Refactor" end)` | `\(.body | split("\n")[0])` | [View](\(.url)) |"')
             SUMMARY_BODY="${SUMMARY_BODY}${table_rows}"
-          else
-            SUMMARY_BODY="${SUMMARY_BODY}**<font color='green'>Excellent!</font>** All CodeRabbit comments have been resolved.\n"
           fi
 
-          # --- Determine Approval Status ---
           SUMMARY_BODY="${SUMMARY_BODY}\n\n---\n"
+
           if [ "$total_unresolved_count" -gt 0 ] || [ "$potential_issue_count" -gt 1 ] || [ "$total_suggestions" -gt 4 ]; then
             SUMMARY_BODY="${SUMMARY_BODY}**<font color='red'>❌ Status: Changes Requested.</font>**\n"
             SUMMARY_BODY="${SUMMARY_BODY}- Total unresolved comments: **$total_unresolved_count** (Required: 0)\n"
             SUMMARY_BODY="${SUMMARY_BODY}- Unresolved 'Potential Issues': **$potential_issue_count** (Required: ≤ 1)\n"
             SUMMARY_BODY="${SUMMARY_BODY}- Total 'Issues' + 'Refactors': **$total_suggestions** (Required: ≤ 4)"
-          else
-            SUMMARY_BODY="${SUMMARY_BODY}**<font color='green'>✅ Status: Approved.</font>** All quality gates passed."
           fi
 
           echo "summary_body<<EOF" >> $GITHUB_OUTPUT
@@ -121,9 +111,8 @@ jobs:
             gh pr review $PR_NUMBER --request-changes --body "Action: Changes requested. See summary comment for details."
             gh pr edit $PR_NUMBER --remove-label "READY TO MERGE" || true
           else
-            echo "All quality gates passed. Checking for existing approval."
+            echo "All quality gates passed. Proceeding with approval."
 
-            # Dismiss previous "CHANGES_REQUESTED" review if it exists, before approving.
             EXISTING_REVIEW_ID=$(gh pr view $PR_NUMBER --json reviews --jq '.reviews[] | select(.author.login == "github-actions[bot]" and .state == "CHANGES_REQUESTED") | .id' | tail -n 1)
             if [ -n "$EXISTING_REVIEW_ID" ]; then
               echo "Dismissing previous 'Changes Requested' review (ID: $EXISTING_REVIEW_ID)."
@@ -133,8 +122,7 @@ jobs:
                 -f message="Previous issues have been addressed."
             fi
 
-            echo "Submitting approval."
-            gh pr review $PR_NUMBER --approve --body "Action: Approved. All code review conditions are met."
+            echo "Submitting the final approval."
             gh pr edit $PR_NUMBER --add-label "READY TO MERGE"
           fi
 
