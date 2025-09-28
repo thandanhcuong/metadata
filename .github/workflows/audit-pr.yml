@@ -44,8 +44,6 @@ jobs:
                 }
               }
             }'
-
-          # SỬA LỖI CUỐI CÙNG: Tên login đúng là "coderabbitai"
           unresolved_count=$(gh api graphql -f query="$graphql_query" -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -F prNumber="$PR_NUMBER" \
             --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[] | select(.author.login == "coderabbitai")] | length')
           
